@@ -114,7 +114,7 @@
 
   <div class="rh"><h2>This session</h2><span class="tot" id="tot"></span></div>
   <ul class="recent" id="recent"><li class="empty">No cards yet.</li></ul>
-  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a> · <b>Scanner v5</b></p>
+  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a> · <b>Scanner v6</b></p>
 </div>
 
 <script>
@@ -292,49 +292,69 @@ function feedback(kind){
 }
 
 /* ===== camera =====
-   Own frame loop: the phone's built-in QR reader (BarcodeDetector) when it exists,
-   otherwise jsQR on the full frame. No scan-box cropping, so the code can be anywhere in view. */
+   Frame loop. jsQR always runs (full frame, then a zoomed center crop for small labels).
+   The phone's built-in reader is used too, but only where it really supports QR
+   (Windows Chrome claims it but returns nothing). */
 var STREAM=null,DETECTOR=null,CANVAS=document.createElement("canvas"),CTX=CANVAS.getContext("2d",{willReadFrequently:true});
-var BUSY_FRAME=false,LAST_FRAME=0,FRAME_MS=90;
+var BUSY_FRAME=false,LAST_FRAME=0,FRAME_MS=110,FRAMES=0,FRAME_T0=0,FLIP=0;
+function setupDetector(){
+  DETECTOR=null;
+  if(!("BarcodeDetector" in window)||!window.BarcodeDetector.getSupportedFormats)return Promise.resolve();
+  return window.BarcodeDetector.getSupportedFormats().then(function(f){
+    if(f&&f.indexOf("qr_code")!==-1)DETECTOR=new window.BarcodeDetector({formats:["qr_code"]});
+  }).catch(function(){DETECTOR=null;});
+}
 function startCam(){
   var over=$("camover"),v=$("video");
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){over.innerHTML="This browser can’t use the camera. Open the page in Safari or Chrome.";return;}
+  if(typeof jsQR!=="function"){over.innerHTML="QR reader didn’t load. Check the internet and reload.";return;}
   over.innerHTML="Starting camera…";
-  try{if("BarcodeDetector" in window)DETECTOR=new window.BarcodeDetector({formats:["qr_code"]});}catch(e){DETECTOR=null;}
-  if(!DETECTOR&&typeof jsQR!=="function"){over.innerHTML="QR reader didn’t load. Check the internet and reload.";return;}
-  navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}})
-    .then(function(stream){
+  setupDetector().then(function(){
+    return navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}});
+  }).then(function(stream){
       STREAM=stream;v.srcObject=stream;v.setAttribute("playsinline","");v.muted=true;
+      // ask for continuous autofocus where the camera supports it
+      try{var tr=stream.getVideoTracks()[0],cap=tr.getCapabilities?tr.getCapabilities():{};
+        if(cap.focusMode&&cap.focusMode.indexOf("continuous")!==-1)tr.applyConstraints({advanced:[{focusMode:"continuous"}]});}catch(e){}
       return v.play();
-    })
-    .then(function(){over.style.display="none";$("aim").className="aim on";lsSet("cubscan.cam","on");requestAnimationFrame(tick);})
+  }).then(function(){over.style.display="none";$("aim").className="aim on";lsSet("cubscan.cam","on");FRAME_T0=performance.now();requestAnimationFrame(tick);})
     .catch(function(e){
       over.style.display="";
       over.innerHTML='<div>Camera blocked or unavailable.<br><small>'+esc(String(e&&e.message||e))+'</small><br><br><button type="button" class="btn" id="camRetry">Try again</button></div>';
       $("camRetry").onclick=startCam;});
 }
+function jsqrRegion(v,sx,sy,sw,sh,maxSide){
+  var scale=Math.min(maxSide/Math.max(sw,sh),2);   // center crop gets enlarged up to 2x
+  var w=Math.round(sw*scale),h=Math.round(sh*scale);
+  if(CANVAS.width!==w||CANVAS.height!==h){CANVAS.width=w;CANVAS.height=h;}
+  CTX.imageSmoothingEnabled=false;
+  CTX.drawImage(v,sx,sy,sw,sh,0,0,w,h);
+  var img=CTX.getImageData(0,0,w,h);
+  var c=jsQR(img.data,w,h,{inversionAttempts:"dontInvert"});
+  return c&&c.data?c.data:"";
+}
+function readJsqr(v){
+  var W=v.videoWidth,H=v.videoHeight;
+  FLIP=(FLIP+1)%2;
+  if(FLIP===0)return jsqrRegion(v,0,0,W,H,1000);                       // whole view
+  var cw=Math.round(W*0.5),ch=Math.round(H*0.6);                         // center of the white box, zoomed
+  return jsqrRegion(v,Math.round((W-cw)/2),Math.round((H-ch)/2),cw,ch,1000);
+}
 function tick(t){
   requestAnimationFrame(tick);
   var v=$("video");
   if(BUSY_FRAME||t-LAST_FRAME<FRAME_MS||v.readyState<2||!v.videoWidth)return;
-  LAST_FRAME=t;BUSY_FRAME=true;
-  if(DETECTOR){
-    DETECTOR.detect(v).then(function(codes){BUSY_FRAME=false;if(codes&&codes.length)onScan(codes[0].rawValue);},
-      function(){BUSY_FRAME=false;DETECTOR=null;});   // fall back to jsQR if the built-in reader fails
-    return;
-  }
-  try{
-    var scale=Math.min(1,960/Math.max(v.videoWidth,v.videoHeight));
-    var w=Math.round(v.videoWidth*scale),h=Math.round(v.videoHeight*scale);
-    if(CANVAS.width!==w){CANVAS.width=w;CANVAS.height=h;}
-    CTX.drawImage(v,0,0,w,h);
-    var img=CTX.getImageData(0,0,w,h);
-    var code=jsQR(img.data,w,h,{inversionAttempts:"dontInvert"});
-    if(code&&code.data)onScan(code.data);
-  }catch(e){}
-  BUSY_FRAME=false;
+  LAST_FRAME=t;BUSY_FRAME=true;FRAMES++;
+  if(FRAMES%15===0){var fps=FRAMES/((t-FRAME_T0)/1000);
+    if(!$("last").getAttribute("data-hit"))$("last").textContent="Looking for a badge… ("+(DETECTOR?"built-in + ":"")+"jsQR, "+v.videoWidth+"×"+v.videoHeight+", "+fps.toFixed(0)+" checks/s)";}
+  var hit="";
+  try{hit=readJsqr(v);}catch(e){}
+  if(hit){BUSY_FRAME=false;$("last").setAttribute("data-hit","1");onScan(hit);return;}
+  if(!DETECTOR){BUSY_FRAME=false;return;}
+  DETECTOR.detect(v).then(function(codes){BUSY_FRAME=false;if(codes&&codes.length){$("last").setAttribute("data-hit","1");onScan(codes[0].rawValue);}},
+    function(){BUSY_FRAME=false;DETECTOR=null;});
 }
-document.addEventListener("visibilitychange",function(){   // phones pause video in the background; resume on return
+document.addEventListener("visibilitychange",function(){
   var v=$("video");if(document.visibilityState==="visible"&&STREAM&&v.paused){v.play().catch(function(){});}});
 
 /* ===== boot ===== */
