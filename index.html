@@ -114,7 +114,7 @@
 
   <div class="rh"><h2>This session</h2><span class="tot" id="tot"></span></div>
   <ul class="recent" id="recent"><li class="empty">No cards yet.</li></ul>
-  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a> · <b>Scanner v4</b></p>
+  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a> · <b>Scanner v5</b></p>
 </div>
 
 <script>
@@ -122,6 +122,11 @@
 var CODES={C:"Chose Respect",U:"Use Safety",B:"Be Responsible"};
 var SAME_BADGE_MS=3000;         // ignore the same badge for 3 s after it is handled
 var EXEC="";
+/* Built-in Cub Card Scan link. Links passed in the address (e.g. from older buttons) are ignored,
+   so the scanner can never be pointed at Express by mistake. "Change scanner link" still overrides. */
+var DEFAULT_EXEC="https://script.google.com/macros/s/AKfycbwnKJ2ED_iMPQcMZiZvgXc-hqU2yhxYJ3oUmnCRpsE2CXQfqhYiULXKihZMEHkFd70G3w/exec";
+var EXPRESS_IDS=["AKfycbzpMJu0Oo5qV2audfjQFbMJIPeYGVHv3EBdLoLHTU4UrGWfgQUj5wVcj0XkacFVd4Pe"];
+function isExpress(u){for(var i=0;i<EXPRESS_IDS.length;i++)if(String(u).indexOf(EXPRESS_IDS[i])!==-1)return true;return false;}
 function $(id){return document.getElementById(id);}
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function lsGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
@@ -159,7 +164,7 @@ function checkConn(){
   api({action:"hello"}).then(function(){c.className="conn ok";c.textContent="Connected ✓";setTimeout(function(){c.style.display="none";},2500);},function(e){
     var id=(EXEC.match(/\/s\/([^\/]+)\/exec/)||[])[1]||EXEC;
     c.className="conn bad";
-    c.innerHTML="Not connected: "+esc(friendly(e))+'<br><small>Using link ending in <b>…'+esc(id.slice(-8))+'</b>. Open it with ?page=ping \u2014 it must say <b>scan-v3-scanner</b>. </small><a href="#" id="fixLink">Change link</a>';
+    c.innerHTML="Not connected: "+esc(friendly(e))+'<br><small>Using link ending in <b>…'+esc(id.slice(-8))+'</b>. Open it with ?page=ping \u2014 it must say <b>scan-v4-jsonp</b>. </small><a href="#" id="fixLink">Change link</a>';
     $("fixLink").onclick=function(ev){ev.preventDefault();$("execIn").value=EXEC;$("setup").style.display="block";};});
 }
 
@@ -334,9 +339,8 @@ document.addEventListener("visibilitychange",function(){   // phones pause video
 
 /* ===== boot ===== */
 function boot(){
-  var q=new URLSearchParams(location.search).get("exec");
-  if(q&&validExec(publicExec(q)))lsSet("cubscan.exec",publicExec(q));
-  EXEC=publicExec(lsGet("cubscan.exec")||"");
+  var manual=publicExec(lsGet("cubscan.manual")||"");
+  EXEC=(validExec(manual)&&!isExpress(manual))?manual:DEFAULT_EXEC;
   if(!validExec(EXEC)){$("setup").style.display="block";$("app").style.display="none";return;}
   $("setup").style.display="none";$("app").style.display="block";
   setMode(MODE);renderRecent();checkConn();
@@ -344,7 +348,8 @@ function boot(){
   if(lsGet("cubscan.cam")==="on")startCam();     // camera permission already granted on this phone
 }
 $("execSave").onclick=function(){var u=publicExec($("execIn").value);
-  if(!validExec(u)){$("execIn").style.borderColor="#b23b2e";return;}lsSet("cubscan.exec",u);boot();};
+  if(!validExec(u)||isExpress(u)){$("execIn").style.borderColor="#b23b2e";$("execIn").value=isExpress(u)?"That\u2019s the Express link \u2014 use the Cub Card Scan link":$("execIn").value;return;}
+  lsSet("cubscan.manual",u===DEFAULT_EXEC?"":u);boot();};
 /* USB/Bluetooth scanner or typed code + Enter also works */
 var KB="",KBT=null;document.addEventListener("keydown",function(e){
   if(e.target&&/INPUT|TEXTAREA/.test(e.target.tagName))return;
