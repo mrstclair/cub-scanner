@@ -130,24 +130,37 @@ function publicExec(u){return String(u||"").trim().replace(/[?#].*$/,"").replace
 function validExec(u){return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_\-]+\/exec$/.test(u);}
 
 /* ===== server ===== */
+/* JSONP: the Scan app answers as a <script>, which phones load without any cross-site rules. */
+var CBN=0;
 function api(req){
-  return fetch(EXEC,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(req),redirect:"follow"})
-    .then(function(r){return r.text();})
-    .then(function(t){try{return JSON.parse(t);}catch(e){throw new Error("NOT_JSON");}})
-    .then(function(d){if(!d||d.ok===false)throw new Error((d&&d.error)||"Server error");return d;});
+  return new Promise(function(resolve,reject){
+    var name="__cub"+(++CBN)+"_"+Date.now(),done=false,el=document.createElement("script"),k,q=["api=1","callback="+name,"_="+Date.now()];
+    for(k in req)if(req.hasOwnProperty(k)&&req[k]!=null)q.push(encodeURIComponent(k)+"="+encodeURIComponent(req[k]));
+    function finish(err,d){if(done)return;done=true;clearTimeout(timer);try{delete window[name];}catch(e){window[name]=undefined;}if(el.parentNode)el.parentNode.removeChild(el);
+      if(err)reject(err);else if(!d||d.ok===false)reject(new Error((d&&d.error)||"Server error"));else resolve(d);}
+    window[name]=function(d){finish(null,d);};
+    el.onerror=function(){finish(new Error("NETWORK"));};
+    el.onload=function(){setTimeout(function(){finish(new Error("NOT_SCAN"));},50);};   // loaded but never answered = not the Scan app
+    var timer=setTimeout(function(){finish(new Error("TIMEOUT"));},20000);
+    el.src=EXEC+"?"+q.join("&");
+    document.head.appendChild(el);
+  });
 }
 
 function friendly(e){
   var m=(e&&e.message)||String(e);
-  if(m==="NOT_JSON")return "Scan app needs its update (Code.gs scan-v3), or its access isn’t set to Anyone.";
-  if(/Failed to fetch|NetworkError|Load failed/i.test(m))return "Can’t reach the Scan app. Check Wi-Fi, and that its access is set to Anyone.";
+  if(m==="NOT_SCAN"||m==="NOT_JSON")return "That link isn’t the updated Cub Card Scan app (it may be the Express link).";
+  if(m==="NETWORK")return "Can’t reach the Scan app. Check Wi-Fi, and that its access is set to Anyone.";
+  if(m==="TIMEOUT")return "The Scan app took too long to answer. Try again.";
   return m;
 }
 function checkConn(){
   var c=$("conn");c.style.display="";c.className="conn wait";c.textContent="Checking connection…";
-  api({action:"hello"}).then(function(){c.className="conn ok";c.textContent="Connected ✓";},function(e){
-    if(/Unknown action/i.test(e.message)){c.className="conn ok";c.textContent="Connected ✓";setTimeout(function(){c.style.display="none";},2500);return;}
-    c.className="conn bad";c.textContent="Not connected: "+friendly(e);});
+  api({action:"hello"}).then(function(){c.className="conn ok";c.textContent="Connected ✓";setTimeout(function(){c.style.display="none";},2500);},function(e){
+    var id=(EXEC.match(/\/s\/([^\/]+)\/exec/)||[])[1]||EXEC;
+    c.className="conn bad";
+    c.innerHTML="Not connected: "+esc(friendly(e))+'<br><small>Using link ending in <b>…'+esc(id.slice(-8))+'</b>. Open it with ?page=ping \u2014 it must say <b>scan-v3-scanner</b>. </small><a href="#" id="fixLink">Change link</a>';
+    $("fixLink").onclick=function(ev){ev.preventDefault();$("execIn").value=EXEC;$("setup").style.display="block";};});
 }
 
 /* ===== names: lookups are cached on this phone for the session ===== */
