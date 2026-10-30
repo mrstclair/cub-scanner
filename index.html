@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#3a2266">
+<title>Cub Card Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{--ink:#241a33;--tiger:#4b2e83;--tiger-dk:#3a2266;--den:#6a4fa3;--den-lt:#ece7f5;--gold:#f0b323;
+    --line:#e7e2ef;--muted:#7d7488;--ok:#2f7d4f;--err:#b23b2e;--paper:#fbfaf7}
+  *{box-sizing:border-box}html,body{margin:0}
+  body{background:var(--paper);color:var(--ink);font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.35;padding:10px 12px calc(16px + env(safe-area-inset-bottom,0px));max-width:560px;margin:0 auto}
+  header{display:flex;align-items:center;gap:10px;margin:0 0 8px}
+  .paw{width:36px;height:36px;border-radius:10px;background:linear-gradient(160deg,var(--tiger),var(--tiger-dk));display:grid;place-items:center;box-shadow:0 0 0 2px var(--gold) inset;flex:none}
+  .paw svg{width:21px;height:21px;fill:#fff}
+  h1{font-size:18px;margin:0;flex:1}
+  .ib{font:inherit;font-size:17px;border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:6px 10px;cursor:pointer}
+  .ib.off{opacity:.45}
+
+  /* mode: ask after scan, or auto-log one letter */
+  .modes{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:4px;background:#efecf5;border-radius:12px;padding:4px;margin:0 0 8px}
+  .modes button{font:inherit;font-weight:800;font-size:14px;border:none;background:transparent;color:var(--muted);padding:9px 4px;border-radius:9px;cursor:pointer}
+  .modes button[aria-pressed="true"]{background:#fff;color:var(--tiger-dk);box-shadow:0 1px 4px rgba(40,28,70,.15)}
+  .modes button.auto[aria-pressed="true"]{background:var(--tiger);color:#fff}
+  .modehint{font-size:12px;color:var(--muted);margin:-2px 2px 8px;text-align:center}
+
+  /* camera */
+  .cam{position:relative;border-radius:16px;overflow:hidden;background:#16121f;aspect-ratio:4/3;max-height:42vh;width:100%;margin:0 auto 10px}
+  #reader{width:100%;height:100%}
+  #reader video{width:100% !important;height:100% !important;object-fit:cover}
+  .camover{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:#fff;padding:16px;pointer-events:none}
+  .camover .btn{pointer-events:auto}
+  .flash{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .25s}
+  .flash.ok{background:rgba(47,125,79,.45);opacity:1}
+  .flash.err{background:rgba(178,59,46,.5);opacity:1}
+
+  /* current student */
+  .cur{background:#fff;border:2px solid var(--line);border-radius:16px;padding:12px;margin:0 0 10px;min-height:150px}
+  .cur.live{border-color:var(--den)}
+  .cur .idle{color:var(--muted);text-align:center;font-weight:600;padding:36px 0}
+  .cur .nm{font-size:24px;font-weight:800;line-height:1.1;text-align:center;word-break:break-word}
+  .cur .cl{font-size:13px;color:var(--muted);text-align:center;font-weight:600;margin:2px 0 10px;min-height:17px}
+  .cur .bad{color:var(--err);text-align:center;font-weight:800;padding:30px 0}
+  .cub{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .cub button{font:inherit;cursor:pointer;border:2px solid var(--den);background:#fff;border-radius:14px;padding:12px 2px 10px;color:var(--den);
+    touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+  .cub button:active{transform:scale(.95);background:var(--den-lt)}
+  .cub .k{display:block;font-size:34px;font-weight:900;line-height:1}
+  .cub .w{display:block;font-size:11px;font-weight:700;margin-top:4px;color:var(--muted)}
+  .skip{display:block;margin:8px auto 0;font:inherit;font-size:13px;font-weight:700;color:var(--muted);background:none;border:none;cursor:pointer;text-decoration:underline}
+
+  /* recent */
+  .rh{display:flex;justify-content:space-between;align-items:baseline;margin:4px 2px 6px}
+  .rh h2{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:0}
+  .rh .tot{font-size:12.5px;font-weight:800;color:var(--tiger-dk)}
+  ul.recent{list-style:none;margin:0;padding:0;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  ul.recent li{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:14.5px}
+  ul.recent li:last-child{border-bottom:none}
+  .badge{flex:none;width:30px;height:30px;border-radius:50%;background:var(--tiger);color:#fff;font-weight:900;display:grid;place-items:center}
+  .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+  .st{flex:none;font-size:12px;font-weight:800}
+  .st.saving{color:#8a6400}.st.ok{color:var(--ok)}.st.err{color:var(--err)}
+  .lnk{flex:none;font:inherit;font-size:12.5px;font-weight:800;border:1.5px solid var(--line);background:#fff;border-radius:16px;padding:4px 10px;cursor:pointer;color:var(--tiger-dk)}
+  li.undone{opacity:.45}li.undone .who{text-decoration:line-through}
+  .empty{padding:14px;color:var(--muted);text-align:center;font-size:13.5px}
+
+  .setup{background:#fff;border:2px solid var(--gold);border-radius:16px;padding:16px;margin:10px 0}
+  .setup h2{margin:0 0 6px;font-size:17px}.setup p{margin:0 0 10px;font-size:14px;color:var(--muted)}
+  .setup input{width:100%;font:inherit;font-size:15px;padding:11px;border:1.5px solid var(--line);border-radius:10px;margin:0 0 10px}
+  .btn{font:inherit;font-size:16px;font-weight:800;border:none;border-radius:12px;padding:12px 18px;cursor:pointer;color:#fff;background:linear-gradient(160deg,var(--tiger),var(--tiger-dk))}
+  .foot{font-size:11.5px;color:var(--muted);text-align:center;margin-top:10px}
+  .foot a{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <span class="paw" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 13.5c2.2 0 5 1.9 5 4.1 0 1.4-1.2 2.2-2.7 2.2-1 0-1.6-.4-2.3-.4s-1.3.4-2.3.4C7.2 19.8 6 19 6 17.6c0-2.2 2.8-4.1 6-4.1zm-5.4-1a1.9 1.9 0 110 3.8 1.9 1.9 0 010-3.8zm10.8 0a1.9 1.9 0 110 3.8 1.9 1.9 0 010-3.8zM9 5.8a1.8 2.3 0 110 4.6A1.8 2.3 0 019 5.8zm6 0a1.8 2.3 0 110 4.6A1.8 2.3 0 0115 5.8z"/></svg></span>
+  <h1>Cub Card Scanner</h1>
+  <button type="button" class="ib" id="snd" title="Sound on/off" aria-label="Sound on/off">🔊</button>
+</header>
+
+<div id="setup" class="setup" style="display:none">
+  <h2>Connect the scanner</h2>
+  <p>Paste the <b>Cub Card Scan</b> web app link (the one ending in <b>/exec</b>). This phone remembers it.</p>
+  <input type="url" id="execIn" placeholder="https://script.google.com/macros/s/…/exec">
+  <button type="button" class="btn" id="execSave">Save</button>
+</div>
+
+<div id="app" style="display:none">
+  <div class="modes" id="modes" role="group" aria-label="Scan mode">
+    <button type="button" data-m="ask" aria-pressed="true">Tap after scan</button>
+    <button type="button" class="auto" data-m="C" aria-pressed="false">Auto C</button>
+    <button type="button" class="auto" data-m="U" aria-pressed="false">Auto U</button>
+    <button type="button" class="auto" data-m="B" aria-pressed="false">Auto B</button>
+  </div>
+  <div class="modehint" id="modehint"></div>
+
+  <div class="cam">
+    <div id="reader"></div>
+    <div class="flash" id="flash"></div>
+    <div class="camover" id="camover"><button type="button" class="btn" id="camStart">📷 Start camera</button></div>
+  </div>
+
+  <div class="cur" id="cur"><div class="idle">Point the camera at a badge</div></div>
+
+  <div class="rh"><h2>This session</h2><span class="tot" id="tot"></span></div>
+  <ul class="recent" id="recent"><li class="empty">No cards yet.</li></ul>
+  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a></p>
+</div>
+
+<script>
+/* ===== config ===== */
+var CODES={C:"Chose Respect",U:"Use Safety",B:"Be Responsible"};
+var SAME_BADGE_MS=3000;         // ignore the same badge for 3 s after it is handled
+var EXEC="";
+function $(id){return document.getElementById(id);}
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function lsGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
+function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+function publicExec(u){return String(u||"").trim().replace(/[?#].*$/,"").replace(/^https:\/\/script\.google\.com\/a\/macros\/[^\/]+\/s\//,"https://script.google.com/macros/s/");}
+function validExec(u){return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_\-]+\/exec$/.test(u);}
+
+/* ===== server ===== */
+function api(req){
+  return fetch(EXEC,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(req),redirect:"follow"})
+    .then(function(r){return r.json();})
+    .then(function(d){if(!d||d.ok===false)throw new Error((d&&d.error)||"Server error");return d;});
+}
+
+/* ===== names: lookups are cached on this phone for the session ===== */
+var NAMES={};   // badge -> {first,last,grade,teacher} | false
+var PENDING_LOOKUP={};
+function lookup(badge){
+  if(NAMES.hasOwnProperty(badge))return Promise.resolve(NAMES[badge]);
+  if(PENDING_LOOKUP[badge])return PENDING_LOOKUP[badge];
+  PENDING_LOOKUP[badge]=api({action:"lookup",badge:badge}).then(function(d){
+    delete PENDING_LOOKUP[badge];NAMES[badge]=d.found?d:false;return NAMES[badge];
+  },function(e){delete PENDING_LOOKUP[badge];throw e;});
+  return PENDING_LOOKUP[badge];
+}
+
+/* ===== mode ===== */
+var MODE=lsGet("cubscan.mode")||"ask";
+function setMode(m){MODE=m;lsSet("cubscan.mode",m);
+  var b=$("modes").getElementsByTagName("button"),i;
+  for(i=0;i<b.length;i++)b[i].setAttribute("aria-pressed",b[i].getAttribute("data-m")===m?"true":"false");
+  $("modehint").textContent=m==="ask"?"Scan, then tap C, U, or B.":"Every scan logs a "+m+" — "+CODES[m]+" card right away.";
+  if(m!=="ask")clearCurrent();}
+
+/* ===== scanning ===== */
+var CUR=null;          // {badge, info}
+var LAST={badge:"",t:0};
+function badgeFromText(t){
+  t=String(t||"").trim();
+  var m=t.match(/[?&]cub=([A-Za-z0-9]+)/);if(m)return m[1].toLowerCase();
+  if(/^[A-Za-z0-9]{6,24}$/.test(t))return t.toLowerCase();
+  return "";
+}
+function onScan(text){
+  var badge=badgeFromText(text),now=Date.now();
+  if(!badge){feedback("err");return;}
+  if(badge===LAST.badge&&now-LAST.t<SAME_BADGE_MS)return;   // same badge still in view
+  if(CUR&&CUR.badge===badge)return;
+  LAST={badge:badge,t:now};
+  if(MODE==="ask"){showCurrent(badge);beep(1);}
+  else{logCard(badge,MODE);}
+}
+function showCurrent(badge){
+  CUR={badge:badge,info:NAMES[badge]||null};renderCurrent();
+  lookup(badge).then(function(info){if(CUR&&CUR.badge===badge){CUR.info=info;renderCurrent();if(info===false)feedback("err");}})
+    .catch(function(){if(CUR&&CUR.badge===badge){CUR.err=true;renderCurrent();}});
+}
+function renderCurrent(){
+  var el=$("cur");
+  if(!CUR){el.className="cur";el.innerHTML='<div class="idle">'+(MODE==="ask"?"Point the camera at a badge":"Auto mode — just keep scanning")+'</div>';return;}
+  if(CUR.info===false){el.className="cur";el.innerHTML='<div class="bad">Badge not recognized</div>';
+    setTimeout(function(){if(CUR&&CUR.info===false)clearCurrent();},1800);return;}
+  var i=CUR.info;
+  var nm=i?esc(i.first+" "+i.last):(CUR.err?"Couldn’t look up name":"Loading name…");
+  var cl=i?esc((i.grade==="K"?"Kindergarten":"Grade "+i.grade)+" · "+i.teacher):"";
+  var h='<div class="nm">'+nm+'</div><div class="cl">'+cl+'</div><div class="cub">',k;
+  for(k in CODES)if(CODES.hasOwnProperty(k))h+='<button type="button" data-code="'+k+'"><span class="k">'+k+'</span><span class="w">'+CODES[k]+'</span></button>';
+  h+='</div><button type="button" class="skip" id="skip">Skip</button>';
+  el.className="cur live";el.innerHTML=h;
+  var b=el.querySelectorAll(".cub button"),j;
+  for(j=0;j<b.length;j++)b[j].onclick=function(){var c=this.getAttribute("data-code"),bd=CUR.badge;clearCurrent();logCard(bd,c);};
+  $("skip").onclick=clearCurrent;
+}
+function clearCurrent(){CUR=null;renderCurrent();}
+
+/* ===== save queue: cards save in the background, scanning never waits ===== */
+var RECENT=[],QUEUE=[],SENDING=false,RID=0;
+function logCard(badge,code){
+  var r={id:++RID,badge:badge,code:code,status:"saving",undo:"",info:NAMES[badge]||null};
+  RECENT.unshift(r);if(RECENT.length>40)RECENT.length=40;
+  QUEUE.push(r);renderRecent();feedback("ok");beep(2);pump();
+}
+function pump(){
+  if(SENDING||!QUEUE.length)return;
+  var r=QUEUE.shift();SENDING=true;
+  api({action:"log",badge:r.badge,code:r.code}).then(function(d){
+    r.status="ok";r.undo=d.undo||"";if(d.first){r.info=r.info||{first:d.first,last:d.last};NAMES[r.badge]=NAMES[r.badge]||r.info;}
+  },function(e){
+    r.status="err";r.error=e.message||"Not saved";
+    if(/no longer active|not recognized/i.test(r.error)){NAMES[r.badge]=false;}
+  }).then(function(){SENDING=false;renderRecent();pump();});
+}
+function retry(id){var i;for(i=0;i<RECENT.length;i++)if(RECENT[i].id===id&&RECENT[i].status==="err"){RECENT[i].status="saving";QUEUE.push(RECENT[i]);}renderRecent();pump();}
+function undo(id){
+  var r=null,i;for(i=0;i<RECENT.length;i++)if(RECENT[i].id===id)r=RECENT[i];
+  if(!r||!r.undo)return;
+  var u=r.undo;r.undo="";r.status="undoing";renderRecent();
+  api({action:"undo",undo:u}).then(function(){r.status="undone";},function(e){r.status="ok";r.undo=u;alertLine(e.message);}).then(renderRecent);
+}
+function alertLine(msg){var c=$("cur");c.className="cur";c.innerHTML='<div class="bad">'+esc(msg||"Something went wrong")+'</div>';setTimeout(clearCurrent,2200);}
+function renderRecent(){
+  var ul=$("recent"),h="",i,n=0;
+  for(i=0;i<RECENT.length;i++)if(RECENT[i].status==="ok"||RECENT[i].status==="saving")n++;
+  $("tot").textContent=n?(n+" card"+(n===1?"":"s")):"";
+  if(!RECENT.length){ul.innerHTML='<li class="empty">No cards yet.</li>';return;}
+  for(i=0;i<RECENT.length&&i<15;i++){var r=RECENT[i],nm=r.info?(r.info.first+" "+r.info.last):(r.status==="err"?"Unknown badge":"Saving…");
+    var st=r.status==="saving"?'<span class="st saving">Saving…</span>':r.status==="ok"?'<span class="st ok">✓</span>':
+      r.status==="undoing"?'<span class="st saving">Undoing…</span>':r.status==="undone"?'<span class="st">Undone</span>':'<span class="st err" title="'+esc(r.error)+'">Not saved</span>';
+    var act=r.status==="ok"&&r.undo?'<button type="button" class="lnk" data-undo="'+r.id+'">Undo</button>':
+      r.status==="err"&&!/no longer active/i.test(r.error||"")?'<button type="button" class="lnk" data-retry="'+r.id+'">Retry</button>':"";
+    h+='<li class="'+(r.status==="undone"?"undone":"")+'"><span class="badge">'+r.code+'</span><span class="who">'+esc(nm)+'</span>'+st+act+'</li>';}
+  ul.innerHTML=h;
+}
+$("recent").addEventListener("click",function(ev){var t=ev.target;
+  if(t.getAttribute("data-undo"))undo(parseInt(t.getAttribute("data-undo"),10));
+  else if(t.getAttribute("data-retry"))retry(parseInt(t.getAttribute("data-retry"),10));});
+window.addEventListener("beforeunload",function(ev){if(SENDING||QUEUE.length){ev.preventDefault();ev.returnValue="Cards are still saving.";return ev.returnValue;}});
+
+/* ===== feedback ===== */
+var SOUND=lsGet("cubscan.sound")!=="off",AC=null;
+function applySnd(){$("snd").textContent=SOUND?"🔊":"🔇";$("snd").className="ib"+(SOUND?"":" off");}
+function beep(kind){
+  if(!SOUND)return;
+  try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();if(AC.state==="suspended")AC.resume();}catch(e){return;}
+  var notes=kind===2?[[880,0],[1318.5,.09]]:kind===3?[[220,0]]:[[1046.5,0]],t=AC.currentTime,i;
+  for(i=0;i<notes.length;i++){var o=AC.createOscillator(),g=AC.createGain(),s=t+notes[i][1];
+    o.frequency.value=notes[i][0];o.type=kind===3?"square":"sine";
+    g.gain.setValueAtTime(.0001,s);g.gain.exponentialRampToValueAtTime(.25,s+.012);g.gain.exponentialRampToValueAtTime(.0001,s+.16);
+    o.connect(g);g.connect(AC.destination);o.start(s);o.stop(s+.18);}
+}
+function feedback(kind){
+  var f=$("flash");f.className="flash "+kind;setTimeout(function(){f.className="flash";},260);
+  if(navigator.vibrate)navigator.vibrate(kind==="ok"?40:[60,40,60]);
+  if(kind==="err")beep(3);
+}
+
+/* ===== camera ===== */
+var SCANNER=null;
+function startCam(){
+  var over=$("camover");
+  if(typeof Html5Qrcode==="undefined"){over.innerHTML="Scanner library didn’t load. Check the internet and reload.";return;}
+  over.innerHTML="Starting camera…";
+  SCANNER=SCANNER||new Html5Qrcode("reader",{formatsToSupport:[0],verbose:false});   // 0 = QR_CODE only
+  SCANNER.start({facingMode:"environment"},{fps:15,qrbox:function(w,h){var s=Math.floor(Math.min(w,h)*0.7);return{width:s,height:s};},disableFlip:true},
+    function(text){onScan(text);},function(){})
+    .then(function(){over.style.display="none";lsSet("cubscan.cam","on");})
+    .catch(function(e){over.innerHTML='<div>Camera blocked or unavailable.<br><small>'+esc(String(e&&e.message||e))+'</small><br><br><button type="button" class="btn" id="camRetry">Try again</button></div>';
+      $("camRetry").onclick=startCam;});
+}
+
+/* ===== boot ===== */
+function boot(){
+  var q=new URLSearchParams(location.search).get("exec");
+  if(q&&validExec(publicExec(q)))lsSet("cubscan.exec",publicExec(q));
+  EXEC=publicExec(lsGet("cubscan.exec")||"");
+  if(!validExec(EXEC)){$("setup").style.display="block";$("app").style.display="none";return;}
+  $("setup").style.display="none";$("app").style.display="block";
+  setMode(MODE);renderRecent();
+  $("camStart").onclick=startCam;
+  if(lsGet("cubscan.cam")==="on")startCam();     // camera permission already granted on this phone
+}
+$("execSave").onclick=function(){var u=publicExec($("execIn").value);
+  if(!validExec(u)){$("execIn").style.borderColor="#b23b2e";return;}lsSet("cubscan.exec",u);boot();};
+$("relink").onclick=function(ev){ev.preventDefault();$("execIn").value=EXEC;$("setup").style.display="block";};
+$("modes").addEventListener("click",function(ev){var m=ev.target.getAttribute("data-m");if(m)setMode(m);});
+$("snd").onclick=function(){SOUND=!SOUND;lsSet("cubscan.sound",SOUND?"on":"off");applySnd();if(SOUND)beep(1);};
+applySnd();boot();
+window.__onScan=onScan;   // test hook
+</script>
+</body>
+</html>
