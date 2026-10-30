@@ -70,6 +70,9 @@
   .setup h2{margin:0 0 6px;font-size:17px}.setup p{margin:0 0 10px;font-size:14px;color:var(--muted)}
   .setup input{width:100%;font:inherit;font-size:15px;padding:11px;border:1.5px solid var(--line);border-radius:10px;margin:0 0 10px}
   .btn{font:inherit;font-size:16px;font-weight:800;border:none;border-radius:12px;padding:12px 18px;cursor:pointer;color:#fff;background:linear-gradient(160deg,var(--tiger),var(--tiger-dk))}
+  .conn{font-size:12.5px;font-weight:700;border-radius:10px;padding:7px 10px;margin:0 0 8px;text-align:center}
+  .conn.wait{background:#fdf0d3;color:#8a6400}.conn.ok{background:#e3f2e8;color:var(--ok)}.conn.bad{background:#f8e0dc;color:var(--err)}
+  .last{font-size:11px;color:var(--muted);text-align:center;margin:-4px 0 8px;word-break:break-all;min-height:14px}
   .foot{font-size:11.5px;color:var(--muted);text-align:center;margin-top:10px}
   .foot a{color:var(--muted)}
 </style>
@@ -89,6 +92,7 @@
 </div>
 
 <div id="app" style="display:none">
+  <div class="conn wait" id="conn">Checking connection…</div>
   <div class="modes" id="modes" role="group" aria-label="Scan mode">
     <button type="button" data-m="ask" aria-pressed="true">Tap after scan</button>
     <button type="button" class="auto" data-m="C" aria-pressed="false">Auto C</button>
@@ -103,6 +107,7 @@
     <div class="camover" id="camover"><button type="button" class="btn" id="camStart">📷 Start camera</button></div>
   </div>
 
+  <div class="last" id="last"></div>
   <div class="cur" id="cur"><div class="idle">Point the camera at a badge</div></div>
 
   <div class="rh"><h2>This session</h2><span class="tot" id="tot"></span></div>
@@ -125,8 +130,22 @@ function validExec(u){return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z
 /* ===== server ===== */
 function api(req){
   return fetch(EXEC,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(req),redirect:"follow"})
-    .then(function(r){return r.json();})
+    .then(function(r){return r.text();})
+    .then(function(t){try{return JSON.parse(t);}catch(e){throw new Error("NOT_JSON");}})
     .then(function(d){if(!d||d.ok===false)throw new Error((d&&d.error)||"Server error");return d;});
+}
+
+function friendly(e){
+  var m=(e&&e.message)||String(e);
+  if(m==="NOT_JSON")return "Scan app needs its update (Code.gs scan-v3), or its access isn’t set to Anyone.";
+  if(/Failed to fetch|NetworkError|Load failed/i.test(m))return "Can’t reach the Scan app. Check Wi-Fi, and that its access is set to Anyone.";
+  return m;
+}
+function checkConn(){
+  var c=$("conn");c.style.display="";c.className="conn wait";c.textContent="Checking connection…";
+  api({action:"hello"}).then(function(){c.className="conn ok";c.textContent="Connected ✓";},function(e){
+    if(/Unknown action/i.test(e.message)){c.className="conn ok";c.textContent="Connected ✓";setTimeout(function(){c.style.display="none";},2500);return;}
+    c.className="conn bad";c.textContent="Not connected: "+friendly(e);});
 }
 
 /* ===== names: lookups are cached on this phone for the session ===== */
@@ -160,7 +179,8 @@ function badgeFromText(t){
 }
 function onScan(text){
   var badge=badgeFromText(text),now=Date.now();
-  if(!badge){feedback("err");return;}
+  $("last").textContent=badge?("Read badge "+badge):("Not a Cub Card badge: "+String(text).slice(0,60));
+  if(!badge){if(now-LAST.t>2000){LAST={badge:"",t:now};feedback("err");}return;}
   if(badge===LAST.badge&&now-LAST.t<SAME_BADGE_MS)return;   // same badge still in view
   if(CUR&&CUR.badge===badge)return;
   LAST={badge:badge,t:now};
@@ -170,7 +190,7 @@ function onScan(text){
 function showCurrent(badge){
   CUR={badge:badge,info:NAMES[badge]||null};renderCurrent();
   lookup(badge).then(function(info){if(CUR&&CUR.badge===badge){CUR.info=info;renderCurrent();if(info===false)feedback("err");}})
-    .catch(function(){if(CUR&&CUR.badge===badge){CUR.err=true;renderCurrent();}});
+    .catch(function(e){if(CUR&&CUR.badge===badge){CUR.err=friendly(e);renderCurrent();feedback("err");}});
 }
 function renderCurrent(){
   var el=$("cur");
@@ -178,7 +198,7 @@ function renderCurrent(){
   if(CUR.info===false){el.className="cur";el.innerHTML='<div class="bad">Badge not recognized</div>';
     setTimeout(function(){if(CUR&&CUR.info===false)clearCurrent();},1800);return;}
   var i=CUR.info;
-  var nm=i?esc(i.first+" "+i.last):(CUR.err?"Couldn’t look up name":"Loading name…");
+  var nm=i?esc(i.first+" "+i.last):(CUR.err?esc(CUR.err):"Loading name…");
   var cl=i?esc((i.grade==="K"?"Kindergarten":"Grade "+i.grade)+" · "+i.teacher):"";
   var h='<div class="nm">'+nm+'</div><div class="cl">'+cl+'</div><div class="cub">',k;
   for(k in CODES)if(CODES.hasOwnProperty(k))h+='<button type="button" data-code="'+k+'"><span class="k">'+k+'</span><span class="w">'+CODES[k]+'</span></button>';
@@ -257,8 +277,10 @@ function startCam(){
   var over=$("camover");
   if(typeof Html5Qrcode==="undefined"){over.innerHTML="Scanner library didn’t load. Check the internet and reload.";return;}
   over.innerHTML="Starting camera…";
-  SCANNER=SCANNER||new Html5Qrcode("reader",{formatsToSupport:[0],verbose:false});   // 0 = QR_CODE only
-  SCANNER.start({facingMode:"environment"},{fps:15,qrbox:function(w,h){var s=Math.floor(Math.min(w,h)*0.7);return{width:s,height:s};},disableFlip:true},
+  SCANNER=SCANNER||new Html5Qrcode("reader",{formatsToSupport:[0],verbose:false,
+    experimentalFeatures:{useBarCodeDetectorIfSupported:true}});   // 0 = QR_CODE; uses the phone's built-in reader when available
+  SCANNER.start({facingMode:"environment"},{fps:20,qrbox:function(w,h){var s=Math.floor(Math.min(w,h)*0.9);return{width:s,height:s};},
+      videoConstraints:{facingMode:"environment",width:{ideal:1280},height:{ideal:720}}},
     function(text){onScan(text);},function(){})
     .then(function(){over.style.display="none";lsSet("cubscan.cam","on");})
     .catch(function(e){over.innerHTML='<div>Camera blocked or unavailable.<br><small>'+esc(String(e&&e.message||e))+'</small><br><br><button type="button" class="btn" id="camRetry">Try again</button></div>';
@@ -272,12 +294,17 @@ function boot(){
   EXEC=publicExec(lsGet("cubscan.exec")||"");
   if(!validExec(EXEC)){$("setup").style.display="block";$("app").style.display="none";return;}
   $("setup").style.display="none";$("app").style.display="block";
-  setMode(MODE);renderRecent();
+  setMode(MODE);renderRecent();checkConn();
   $("camStart").onclick=startCam;
   if(lsGet("cubscan.cam")==="on")startCam();     // camera permission already granted on this phone
 }
 $("execSave").onclick=function(){var u=publicExec($("execIn").value);
   if(!validExec(u)){$("execIn").style.borderColor="#b23b2e";return;}lsSet("cubscan.exec",u);boot();};
+/* USB/Bluetooth scanner or typed code + Enter also works */
+var KB="",KBT=null;document.addEventListener("keydown",function(e){
+  if(e.target&&/INPUT|TEXTAREA/.test(e.target.tagName))return;
+  if(e.key==="Enter"){if(KB)onScan(KB);KB="";return;}
+  if(e.key&&e.key.length===1){KB+=e.key;clearTimeout(KBT);KBT=setTimeout(function(){KB="";},800);}});
 $("relink").onclick=function(ev){ev.preventDefault();$("execIn").value=EXEC;$("setup").style.display="block";};
 $("modes").addEventListener("click",function(ev){var m=ev.target.getAttribute("data-m");if(m)setMode(m);});
 $("snd").onclick=function(){SOUND=!SOUND;lsSet("cubscan.sound",SOUND?"on":"off");applySnd();if(SOUND)beep(1);};
