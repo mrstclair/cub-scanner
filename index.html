@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#3a2266">
 <title>Cub Card Scanner</title>
+<script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.0.8/dist/iife/ponyfill.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <style>
   :root{--ink:#241a33;--tiger:#4b2e83;--tiger-dk:#3a2266;--den:#6a4fa3;--den-lt:#ece7f5;--gold:#f0b323;
@@ -117,7 +118,7 @@
 
   <div class="rh"><h2>This session</h2><span class="tot" id="tot"></span></div>
   <ul class="recent" id="recent"><li class="empty">No cards yet.</li></ul>
-  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a> · <b>Scanner v8</b></p>
+  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a> · <b>Scanner v9</b></p>
 </div>
 
 <script>
@@ -308,22 +309,23 @@ function feedback(kind){
 var STREAM=null,DETECTOR=null,CANVAS=document.createElement("canvas"),CTX=CANVAS.getContext("2d",{willReadFrequently:true});
 var BUSY_FRAME=false,LAST_FRAME=0,FRAME_MS=110,FRAMES=0,FRAME_T0=0,FLIP=0;
 function setupDetector(){
-  DETECTOR=null;
+  DETECTOR=null;ZX=null;READER="jsQR";
+  // ZXing (the engine behind most scanner apps) — much better on blurry webcams and thermal labels
+  try{if(window.BarcodeDetectionAPI&&BarcodeDetectionAPI.BarcodeDetector){ZX=new BarcodeDetectionAPI.BarcodeDetector({formats:["qr_code"]});READER="ZXing";}}catch(e){ZX=null;}
   if(!("BarcodeDetector" in window)||!window.BarcodeDetector.getSupportedFormats)return Promise.resolve();
   return window.BarcodeDetector.getSupportedFormats().then(function(f){
-    if(f&&f.indexOf("qr_code")!==-1)DETECTOR=new window.BarcodeDetector({formats:["qr_code"]});
+    if(f&&f.indexOf("qr_code")!==-1){DETECTOR=new window.BarcodeDetector({formats:["qr_code"]});READER="built-in + "+READER;}
   }).catch(function(){DETECTOR=null;});
 }
 function startCam(){
   var over=$("camover"),v=$("video");
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){over.innerHTML="This browser can’t use the camera. Open the page in Safari or Chrome.";return;}
-  if(typeof jsQR!=="function"){over.innerHTML="QR reader didn’t load. Check the internet and reload.";return;}
+  if(typeof jsQR!=="function"&&!window.BarcodeDetectionAPI){over.innerHTML="QR reader didn’t load. Check the internet and reload.";return;}
   over.innerHTML="Starting camera…";
   setupDetector().then(function(){
     return navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}});
   }).then(function(stream){
       STREAM=stream;v.srcObject=stream;v.setAttribute("playsinline","");v.muted=true;
-      // ask for continuous autofocus where the camera supports it
       try{var tr=stream.getVideoTracks()[0],cap=tr.getCapabilities?tr.getCapabilities():{};
         if(cap.focusMode&&cap.focusMode.indexOf("continuous")!==-1)tr.applyConstraints({advanced:[{focusMode:"continuous"}]});}catch(e){}
       return v.play();
@@ -333,36 +335,48 @@ function startCam(){
       over.innerHTML='<div>Camera blocked or unavailable.<br><small>'+esc(String(e&&e.message||e))+'</small><br><br><button type="button" class="btn" id="camRetry">Try again</button></div>';
       $("camRetry").onclick=startCam;});
 }
+var ZX=null,READER="jsQR",CROP=document.createElement("canvas"),CROPX=CROP.getContext("2d");
+function centerCrop(v,zoom){   // middle of the white box, enlarged so small labels have more pixels
+  var W=v.videoWidth,H=v.videoHeight,cw=Math.round(W*0.5),ch=Math.round(H*0.6),w=Math.round(cw*zoom),h=Math.round(ch*zoom);
+  if(CROP.width!==w||CROP.height!==h){CROP.width=w;CROP.height=h;}
+  CROPX.imageSmoothingEnabled=true;CROPX.drawImage(v,Math.round((W-cw)/2),Math.round((H-ch)/2),cw,ch,0,0,w,h);
+  return CROP;
+}
 function jsqrRegion(v,sx,sy,sw,sh,maxSide){
-  var scale=Math.min(maxSide/Math.max(sw,sh),2);   // center crop gets enlarged up to 2x
+  var scale=Math.min(maxSide/Math.max(sw,sh),2);
   var w=Math.round(sw*scale),h=Math.round(sh*scale);
   if(CANVAS.width!==w||CANVAS.height!==h){CANVAS.width=w;CANVAS.height=h;}
-  CTX.imageSmoothingEnabled=false;
+  CTX.imageSmoothingEnabled=true;
   CTX.drawImage(v,sx,sy,sw,sh,0,0,w,h);
   var img=CTX.getImageData(0,0,w,h);
-  var c=jsQR(img.data,w,h,{inversionAttempts:"dontInvert"});
+  var c=jsQR(img.data,w,h,{inversionAttempts:"attemptBoth"});
   return c&&c.data?c.data:"";
 }
 function readJsqr(v){
   var W=v.videoWidth,H=v.videoHeight;
-  FLIP=(FLIP+1)%2;
-  if(FLIP===0)return jsqrRegion(v,0,0,W,H,1000);                       // whole view
-  var cw=Math.round(W*0.5),ch=Math.round(H*0.6);                         // center of the white box, zoomed
+  if(FLIP===0)return jsqrRegion(v,0,0,W,H,1000);
+  var cw=Math.round(W*0.5),ch=Math.round(H*0.6);
   return jsqrRegion(v,Math.round((W-cw)/2),Math.round((H-ch)/2),cw,ch,1000);
 }
+function found(text){$("last").setAttribute("data-hit","1");onScan(text);}
 function tick(t){
   requestAnimationFrame(tick);
   var v=$("video");
   if(BUSY_FRAME||t-LAST_FRAME<FRAME_MS||v.readyState<2||!v.videoWidth)return;
-  LAST_FRAME=t;BUSY_FRAME=true;FRAMES++;
-  if(FRAMES%15===0){var fps=FRAMES/((t-FRAME_T0)/1000);
-    if(!$("last").getAttribute("data-hit"))$("last").textContent="Looking for a badge… ("+(DETECTOR?"built-in + ":"")+"jsQR, "+v.videoWidth+"×"+v.videoHeight+", "+fps.toFixed(0)+" checks/s)";}
-  var hit="";
-  try{hit=readJsqr(v);}catch(e){}
-  if(hit){BUSY_FRAME=false;$("last").setAttribute("data-hit","1");onScan(hit);return;}
-  if(!DETECTOR){BUSY_FRAME=false;return;}
-  DETECTOR.detect(v).then(function(codes){BUSY_FRAME=false;if(codes&&codes.length){$("last").setAttribute("data-hit","1");onScan(codes[0].rawValue);}},
-    function(){BUSY_FRAME=false;DETECTOR=null;});
+  LAST_FRAME=t;BUSY_FRAME=true;FRAMES++;FLIP=(FLIP+1)%2;
+  if(FRAMES%15===0&&!$("last").getAttribute("data-hit")){var fps=FRAMES/((t-FRAME_T0)/1000);
+    $("last").textContent="Looking for a badge… ("+READER+", "+v.videoWidth+"×"+v.videoHeight+", "+fps.toFixed(0)+" checks/s)";}
+  var done=function(){BUSY_FRAME=false;};
+  var tryJsqr=function(){var hit="";try{if(typeof jsQR==="function")hit=readJsqr(v);}catch(e){}if(hit)found(hit);done();};
+  var tryZx=function(){
+    if(!ZX){tryJsqr();return;}
+    var src=FLIP===0?v:centerCrop(v,1.6);
+    ZX.detect(src).then(function(c){if(c&&c.length){found(c[0].rawValue);done();}else tryJsqr();},
+      function(){ZX=null;READER=READER.replace("ZXing","jsQR");tryJsqr();});
+  };
+  if(DETECTOR){DETECTOR.detect(v).then(function(c){if(c&&c.length){found(c[0].rawValue);done();}else tryZx();},
+    function(){DETECTOR=null;tryZx();});return;}
+  tryZx();
 }
 document.addEventListener("visibilitychange",function(){
   var v=$("video");if(document.visibilityState==="visible"&&STREAM&&v.paused){v.play().catch(function(){});}});
