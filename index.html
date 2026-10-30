@@ -114,7 +114,7 @@
 
   <div class="rh"><h2>This session</h2><span class="tot" id="tot"></span></div>
   <ul class="recent" id="recent"><li class="empty">No cards yet.</li></ul>
-  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a> · <b>Scanner v6</b></p>
+  <p class="foot">Cards are credited to <b>Tiger</b>. <a href="#" id="relink">Change scanner link</a> · <b>Scanner v7</b></p>
 </div>
 
 <script>
@@ -194,6 +194,7 @@ var LAST={badge:"",t:0};
 function badgeFromText(t){
   t=String(t||"").trim();
   var m=t.match(/[?&]cub=([A-Za-z0-9]+)/);if(m)return m[1].toLowerCase();
+  m=t.match(/^CUB-([A-Za-z0-9]{6,24})$/i);if(m)return m[1].toLowerCase();   // short code from small thermal labels
   if(/^[A-Za-z0-9]{6,24}$/.test(t))return t.toLowerCase();
   return "";
 }
